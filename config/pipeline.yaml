@@ -1,0 +1,35 @@
+# Pipeline configuration. ${VAR} and ${VAR:-default} are expanded from the environment,
+# so secrets such as the database password never live in this file.
+# CLI flags (--input-dir, --db-url, --workers) override the values here.
+
+source:
+  directory: ${INPUT_DIR:-/data/input}
+  pattern: "*.csv"          # no recursion: the spec guarantees a flat directory
+  encoding: utf-8
+  delimiter: ","
+
+target:
+  database_url: ${DATABASE_URL}
+  table: sensor_reading
+
+processing:
+  workers: 4                # files processed in parallel (one process each)
+  batch_size: 10000         # rows per COPY flush into the staging table
+
+# What a record looks like. Each column names a parser ("type") from the
+# validation registry plus optional extra rules. A row failing any of them goes
+# to rejected_record with the reason.
+dataset:
+  columns:
+    - source: timestamp     # header name in the CSV
+      target: ts            # column in the target table
+      type: timestamp_tz    # ISO 8601, timezone offset required
+    - source: sensorName
+      target: sensor_name
+      type: string
+      rules: [non_empty]
+    - source: value
+      target: value
+      type: float           # rejects true/"ABC"/NaN/Infinity
+  unique_key: [sensor_name, ts]
+  on_conflict: first_wins   # only strategy for now; differing values are logged
