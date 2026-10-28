@@ -5,7 +5,7 @@ import pytest
 from ingestor.pipeline import process_file
 from tests.conftest import make_config
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("test_sensors")]
 
 HEADER = "timestamp,sensorName,value"
 
@@ -109,3 +109,19 @@ def test_failed_file_is_retried_on_the_next_run(conn, config, write_csv) -> None
 
     assert result.status == "done"
     assert len(readings(conn)) == 1
+
+
+def test_same_file_under_another_path_is_recognised(conn, config, write_csv, tmp_path) -> None:
+    """The host and a container see the input directory at different paths."""
+    path = write_csv("f1.csv", [HEADER, "2024-03-01T10:00:00Z,s1,1", "bad,s1,2"])
+    elsewhere = tmp_path / "mounted-elsewhere"
+    elsewhere.mkdir()
+    copy = elsewhere / "f1.csv"
+    copy.write_bytes(path.read_bytes())
+
+    process_file(conn, path, config)
+    result = process_file(conn, copy, config)
+
+    assert result.status == "skipped"
+    assert conn.execute("SELECT file_name FROM ingest_file").fetchall() == [("f1.csv",)]
+    assert conn.execute("SELECT count(*) FROM rejected_record").fetchone() == (1,)

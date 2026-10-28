@@ -13,8 +13,13 @@ target:
   table: sensor_reading
 
 processing:
-  workers: 4                # files processed in parallel (one process each)
-  batch_size: 10000         # rows per COPY flush into the staging table
+  workers: ${WORKERS:-4}    # files processed in parallel (one process each)
+  # Rows per transaction. Each batch commits with the file's checkpoint, so a failure
+  # loses at most one batch and a retry resumes after it. 10,000 rows (~0.5 MB of CSV)
+  # keeps each transaction short (key locks are held for well under a second) while
+  # the per-commit cost (a few merge statements plus one flush to disk) is spread over
+  # enough rows to stay small. Raise it for throughput, lower it for shorter locks.
+  batch_size: ${BATCH_SIZE:-10000}
 
 # What a record looks like. Each column names a parser ("type") from the
 # validation registry plus optional extra rules. A row failing any of them goes
@@ -33,3 +38,8 @@ dataset:
       type: float           # rejects true/"ABC"/NaN/Infinity
   unique_key: [sensor_name, ts]
   on_conflict: first_wins   # only strategy for now; differing values are logged
+  # Checks against the reference data, run in the database before the insert.
+  # A row that parsed but fails one goes to quarantined_reading, not the target.
+  checks:
+    - known_sensor          # sensor must be in the registry (make seed)
+    - value_in_type_range   # value within sensor_type.valid_min..valid_max

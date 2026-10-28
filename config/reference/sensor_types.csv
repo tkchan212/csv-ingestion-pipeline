@@ -1,0 +1,5 @@
+code,name,unit,valid_min,valid_max
+TMP,Air temperature,°C,-20,60
+HUM,Relative humidity,%,0,100
+CO2,CO2 concentration,ppm,0,5000
+PWR,Electrical power draw,kW,0,500

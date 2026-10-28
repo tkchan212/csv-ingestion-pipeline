@@ -24,6 +24,9 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-ingestor}:${POSTGRES_PASSWORD:-ingestor}@db:5432/${POSTGRES_DB:-sensors}
+      # Optional tuning, passed through from the host environment or .env.
+      WORKERS: ${WORKERS:-4}
+      BATCH_SIZE: ${BATCH_SIZE:-10000}
     volumes:
       - ./data/input:/data/input:ro
       - ./config:/app/config:ro

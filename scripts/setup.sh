@@ -20,6 +20,7 @@ fi
 .venv/bin/pip install --quiet -e ".[dev]"
 
 docker compose up -d --wait db
+make seed
 
 echo
 echo "Ready. Next: make generate-data && make ingest"

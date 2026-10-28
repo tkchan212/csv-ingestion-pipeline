@@ -11,13 +11,17 @@ from ingestor.config import (
     TargetConfig,
 )
 
-# Mirrors config/pipeline.yaml until YAML loading exists.
+# Mirrors config/pipeline.yaml (test_config checks they match).
 SENSOR_COLUMNS = (
     ColumnConfig(source="timestamp", target="ts", type="timestamp_tz"),
     ColumnConfig(source="sensorName", target="sensor_name", type="string", rules=("non_empty",)),
     ColumnConfig(source="value", target="value", type="float"),
 )
-SENSOR_DATASET = DatasetConfig(columns=SENSOR_COLUMNS, unique_key=("sensor_name", "ts"))
+SENSOR_DATASET = DatasetConfig(
+    columns=SENSOR_COLUMNS,
+    unique_key=("sensor_name", "ts"),
+    checks=("known_sensor", "value_in_type_range"),
+)
 
 
 @pytest.fixture

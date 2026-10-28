@@ -10,7 +10,7 @@ from ingestor.pipeline import process_file
 from ingestor.writer import StagedLoad, TargetTable, claim_file
 from tests.conftest import make_config
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("test_sensors")]
 
 HEADER = "timestamp,sensorName,value"
 KEY = {"sensor_name": "s1", "ts": "2024-03-01T10:00:00+00:00"}
@@ -25,7 +25,7 @@ def conflicts(conn):
     return conn.execute(
         """
         SELECT target_table, unique_key, kept_values, rejected_values,
-               kf.path, c.kept_line_no, rf.path, c.rejected_line_no
+               kf.file_name, c.kept_line_no, rf.file_name, c.rejected_line_no
         FROM ingest_conflict c
         JOIN ingest_file kf ON kf.id = c.kept_file_id
         JOIN ingest_file rf ON rf.id = c.rejected_file_id
@@ -50,7 +50,7 @@ def test_conflict_within_a_file_logs_both_values(conn, config, write_csv) -> Non
 
     assert (result.rows_inserted, result.rows_duplicate, result.rows_conflict) == (1, 1, 1)
     assert stored_value(conn) == 1.0
-    file = str(path.resolve())
+    file = path.name
     assert conflicts(conn) == [
         ("sensor_reading", KEY, {"value": 1}, {"value": 9}, file, 2, file, 4),
     ]
@@ -67,7 +67,7 @@ def test_conflict_across_files_points_at_the_kept_row(conn, config, write_csv) -
     assert (result.rows_inserted, result.rows_duplicate, result.rows_conflict) == (1, 0, 1)
     assert conflicts(conn) == [
         ("sensor_reading", KEY, {"value": 1}, {"value": 2},
-         str(first.resolve()), 2, str(second.resolve()), 3),
+         first.name, 2, second.name, 3),
     ]
 
 
@@ -112,7 +112,7 @@ def test_conflict_with_a_concurrent_uncommitted_file_is_still_logged(
     results = {}
 
     with psycopg.connect(database_url, autocommit=True) as worker_a:
-        file_id = claim_file(worker_a, str(file_a.resolve()))
+        file_id = claim_file(worker_a, file_a.name).file_id
         with worker_a.transaction():
             load = StagedLoad(worker_a, TargetTable.from_config(config), file_id)
             load.stage([_record(2, "s1", "2024-03-01T10:00:00Z", 1.0)])

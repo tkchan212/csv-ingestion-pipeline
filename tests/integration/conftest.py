@@ -36,7 +36,18 @@ def database_url() -> str:
 def conn(database_url: str):
     with psycopg.connect(database_url, autocommit=True) as conn:
         conn.execute(
-            "TRUNCATE ingest_conflict, rejected_record, sensor_reading, ingest_file"
-            " RESTART IDENTITY"
+            "TRUNCATE ingest_conflict, rejected_record, quarantined_reading, sensor_reading,"
+            " ingest_file, sensor, building, sensor_type RESTART IDENTITY"
         )
         yield conn
+
+
+@pytest.fixture
+def test_sensors(conn) -> None:
+    """Register sensors s1..s3 (type range -100..100) for tests about loading mechanics."""
+    conn.execute("INSERT INTO sensor_type VALUES ('TST', 'Test', 'u', -100, 100)")
+    conn.execute("INSERT INTO building (code, name) VALUES ('TB', 'Test building')")
+    conn.execute(
+        "INSERT INTO sensor (name, type_code, building_code, floor)"
+        " VALUES ('s1', 'TST', 'TB', 1), ('s2', 'TST', 'TB', 1), ('s3', 'TST', 'TB', 1)"
+    )
