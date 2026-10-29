@@ -4,8 +4,6 @@ Loads every CSV file in a directory into PostgreSQL, in parallel, with row valid
 duplicate handling and conflict logging. What a record looks like (columns, types,
 validation rules, unique key) is defined in [config/pipeline.yaml](config/pipeline.yaml).
 
-> Status: all four steps done; see "Limitations and next steps" for what is left.
-
 ## Quick start
 
 ```bash
@@ -14,6 +12,42 @@ make generate-data  # mock CSVs into ./data/input
 make ingest         # run the ingestor container against ./data/input
 make psql           # inspect results
 ```
+
+### Reset, reload and verify
+
+To clear everything and prove the pipeline end to end:
+
+```bash
+make reset-db       # drop the database volume, re-create the schema, reload reference data
+make generate-data  # optional: new mock files (same seed gives the same files)
+make ingest         # load ./data/input
+make verify         # compare the database with data/input/manifest.json
+```
+
+`make reset-db` deletes all loaded data, including the per-file status, so every file is
+loaded again on the next `make ingest`. Without a reset, files already marked `done` are
+skipped. `make verify` prints one line per check and exits non-zero on any mismatch:
+
+```
+OK    files done                     database=10  expected=10
+OK    readings stored                database=972173  expected=972173
+OK    rows rejected                  database=10018  expected=10018
+OK    quarantined: unknown sensor    database=935  expected=935
+OK    quarantined: out of range      database=1895  expected=1895
+OK    duplicates + conflicts         database=14979  expected=14979
+OK    counters vs tables             database=(972173, 10018, 2830, 5068)  expected=(...)
+info  duplicates / conflicts         database=9911 / 5068  manifest=9925 / 5054  (...)
+
+All checks passed.
+```
+
+Duplicates and conflicts are checked as a total: with more than one worker, which of two
+differing values is kept depends on commit order (see "What parallel runs change"). To see
+an exact match on both, load with one worker: `WORKERS=1 make ingest`.
+
+To demonstrate crash recovery, interrupt `make ingest` with Ctrl-C partway, run it again,
+and then run `make verify`. The second run resumes the unfinished files after their last
+committed batch.
 
 Run with other settings by overriding the config:
 
@@ -67,7 +101,7 @@ src/ingestor/
   writer.py               COPY into staging, quarantine, merge into target, log conflicts
   registry.py             upsert reference data from config/reference/*.csv
   pipeline.py             worker pool, per-file status and summary
-scripts/                  setup.sh, generate_data.py
+scripts/                  setup.sh, generate_data.py, verify.py
 tests/unit, tests/integration
 ```
 
@@ -120,7 +154,8 @@ check it fails. Quarantine runs before deduplication, so a glitch reading can ne
 the "first" row for its key and push out the real one.
 
 The foreign key from `sensor_reading` to `sensor` is the safety net. Even with the checks
-turned off, an unknown sensor fails the file instead of slipping in.
+turned off, an unknown sensor fails its batch (and the file is marked `failed`) instead of
+slipping in.
 
 Checks are named SQL conditions in `checks.py`, switched on by name in the config, like
 parsers and rules. They depend on the dataset's columns and reference tables, so a new
@@ -224,6 +259,42 @@ SELECT unique_key, kept_values, rejected_values, f.file_name, rejected_line_no
 FROM ingest_conflict c JOIN ingest_file f ON f.id = c.rejected_file_id;
 ```
 
+## Operations
+
+The pipeline is meant to be run by a scheduler and looked after by people who did not write
+it, so its state lives in the database where it can be queried.
+
+**Running and recovering**
+
+- **`ingest_file` is the run log.** Status, start and finish times, the error, a count for
+  every outcome and the checkpoint. "Which files failed last night, and why?" is one query.
+- **Recovery needs no manual steps.** A rerun resumes after the last committed batch, a
+  crashed worker's lock disappears with its connection, and overlapping runs load each
+  file once.
+- **Every reading is traceable.** It keeps the file and line it came from, so a value can be
+  traced to its source and a bad file's rows removed with
+  `DELETE … WHERE ingest_file_id = …`.
+- **Data quality can be tracked.** Rejection reasons and check names are fixed strings, so
+  grouping on them over time gives a trend (a jump in invalid timestamps usually means the
+  supplier changed format).
+- **Exit codes separate kinds of failure.** 1 means some files failed (a data problem); 2
+  means the run could not start (an infrastructure or deployment problem), so they can be
+  alerted on differently. Config errors are all reported at startup.
+
+**Administration**
+
+- **Reference data is data, not code.** Registering a sensor or tightening a type's range is
+  a row change, which a future admin dashboard could make without a release.
+- **The starting state is reviewed.** The CSVs in `config/reference` are version-controlled,
+  and `make seed` is safe to repeat.
+- **One image runs everywhere.** Everything that differs between environments (database URL,
+  input directory, `WORKERS`, `BATCH_SIZE`) is an environment variable.
+- **Consumers get a stable interface.** `sensor_reading_detail` can stay the same while the
+  tables underneath evolve.
+- **Before admins edit reference data in production**, add a change history (who changed
+  what, when), since a changed range applies to later loads only. Other gaps are listed
+  under "Limitations and next steps".
+
 ## Assumptions
 
 - Timestamps must be a full ISO 8601 date-time (`YYYY-MM-DDTHH:MM[:SS[.ffffff]]`) with an
@@ -237,22 +308,27 @@ FROM ingest_conflict c JOIN ingest_file f ON f.id = c.rejected_file_id;
   otherwise the whole file is marked `failed`. So is a file that is not valid in the
   configured encoding.
 - A file whose status is `done` is skipped on rerun; `failed` files are retried.
+- **File names are unique and never reused.** A file is identified by its name within the
+  input directory, so the same directory is recognised whether it is read on the host or
+  mounted in Docker at another path. A new file with an old name would be skipped as
+  already loaded, and a failed file fixed in place resumes by line number, which is only
+  right if the lines before the checkpoint did not change. If names can repeat, the only
+  change needed is a hashing step: hash each file's content before claiming it and use the
+  hash as its identity in `ingest_file`, at the cost of one extra read of each file.
 
 ## Limitations and next steps
 
 - **Replaying quarantined rows** once their cause is fixed (for example a sensor added to the
   registry) is not built.
-- **File identity is the file name.** That way the same input directory is recognised
-  whether it is read on the host or mounted in Docker at another path. It assumes names are
-  never reused: a new file with an old name is skipped as already loaded, and a failed file
-  fixed in place resumes by line number, which is only right if the lines before the
-  checkpoint did not change. If names could repeat, a content hash per file would be the
-  identity instead, at the cost of one extra read of each file.
+- **File identity is the file name** (see "Assumptions"); a content hash would replace it
+  if names could repeat.
 - **Scale:** at billions of rows, use an integer `sensor_id` key and partition
   `sensor_reading` by time (or use TimescaleDB). Bulk backfills would benefit from loading
   first and building indexes afterwards.
-- **Operations:** metrics and alerts on rejection, quarantine and conflict rates per file
-  and per sensor.
+- **Operations:** structured (JSON) logs and metrics with alerts on rejection, quarantine
+  and conflict rates per file and per sensor; a change history for reference data; a
+  migration tool (Flyway, sqitch or Alembic) instead of one init script; archiving
+  processed files out of the input directory.
 
 ## Mock data
 
@@ -264,5 +340,5 @@ rows come from three sensors that are not in the registry, or carry impossible v
 (for example 120 °C), to exercise quarantine. Tune it with
 `python scripts/generate_data.py --help`. On the default data set with 1 worker, the counts in
 the database (rows, `rejected_record`, `quarantined_reading` per check, `rows_duplicate`,
-`ingest_conflict`) match the manifest exactly. With several workers, see "What parallel runs
-change" above.
+`ingest_conflict`) match the manifest exactly; `make verify` checks this. With several
+workers, see "What parallel runs change" above.

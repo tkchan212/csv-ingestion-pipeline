@@ -125,8 +125,8 @@ def claim_file(conn: Connection, file_name: str) -> Claim:
         """,
         (file_name,),
     ).fetchone()
-    (locked,) = conn.execute("SELECT pg_try_advisory_lock(%s)", (file_id,)).fetchone()
-    if not locked:
+    (lock_acquired,) = conn.execute("SELECT pg_try_advisory_lock(%s)", (file_id,)).fetchone()
+    if not lock_acquired:
         return Claim(None, "being loaded by another worker")
     # Checked only once the lock is held: another worker may have just finished it.
     (status, committed_line_no) = conn.execute(

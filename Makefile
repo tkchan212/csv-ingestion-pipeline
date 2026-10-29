@@ -1,4 +1,4 @@
-.PHONY: setup up down reset-db seed ingest generate-data test test-unit lint psql
+.PHONY: setup up down reset-db seed ingest generate-data verify test test-unit lint psql
 
 COMPOSE := docker compose
 
@@ -26,6 +26,9 @@ ingest:         ## Build and run the ingestor against ./data/input
 
 generate-data:  ## Write mock CSV files into ./data/input
 	.venv/bin/python scripts/generate_data.py --out data/input
+
+verify:         ## Compare the database with data/input/manifest.json after a load
+	.venv/bin/python scripts/verify.py
 
 test:           ## Unit + integration tests (needs `make up`)
 	.venv/bin/pytest
