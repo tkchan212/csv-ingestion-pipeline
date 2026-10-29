@@ -272,8 +272,12 @@ it, so its state lives in the database where it can be queried.
   crashed worker's lock disappears with its connection, and overlapping runs load each
   file once.
 - **Every reading is traceable.** It keeps the file and line it came from, so a value can be
-  traced to its source and a bad file's rows removed with
-  `DELETE … WHERE ingest_file_id = …`.
+  traced to its source and a bad file's rows found and removed
+  (`DELETE … WHERE ingest_file_id = …`). There is deliberately no index on
+  `ingest_file_id`: it would make every insert into the largest table slower to speed up a
+  rare repair, so at scale that delete is a full-table scan. If it becomes routine, add the
+  index. Removing a file also does not restore the values it won over other files; those
+  files need reloading.
 - **Data quality can be tracked.** Rejection reasons and check names are fixed strings, so
   grouping on them over time gives a trend (a jump in invalid timestamps usually means the
   supplier changed format).
@@ -320,8 +324,6 @@ it, so its state lives in the database where it can be queried.
 
 - **Replaying quarantined rows** once their cause is fixed (for example a sensor added to the
   registry) is not built.
-- **File identity is the file name** (see "Assumptions"); a content hash would replace it
-  if names could repeat.
 - **Scale:** at billions of rows, use an integer `sensor_id` key and partition
   `sensor_reading` by time (or use TimescaleDB). Bulk backfills would benefit from loading
   first and building indexes afterwards.
