@@ -1,4 +1,4 @@
-.PHONY: setup up down reset-db seed ingest generate-data verify test test-unit lint psql
+.PHONY: setup up down clean reset-db seed ingest generate-data verify test test-unit lint psql
 
 COMPOSE := docker compose
 
@@ -10,6 +10,10 @@ up:             ## Start PostgreSQL
 
 down:           ## Stop everything (keeps data)
 	$(COMPOSE) down
+
+clean:          ## Remove containers, database volume, built image, venv and mock data (keeps .env)
+	$(COMPOSE) down -v --rmi local --remove-orphans
+	rm -rf .venv src/*.egg-info data/input/*.csv data/input/manifest.json
 
 reset-db:       ## Drop the database volume, re-run migrations, reload reference data
 	$(COMPOSE) down -v

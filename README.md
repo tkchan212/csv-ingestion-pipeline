@@ -4,29 +4,50 @@ Loads every CSV file in a directory into PostgreSQL, in parallel, with row valid
 duplicate handling and conflict logging. What a record looks like (columns, types,
 validation rules, unique key) is defined in [config/pipeline.yaml](config/pipeline.yaml).
 
+## Prerequisites
+
+- Docker with Compose v2 (`docker compose`)
+- Python 3.11 or newer, and `make`
+
+The pipeline itself runs in Docker. Python on the host is only used for the mock data,
+`make verify` and the tests. `make setup` picks the newest `python3.13`, `python3.12`,
+`python3.11` or `python3` it finds that is 3.11 or newer; on macOS the default `python3` is
+often Apple's 3.9, so this matters. To choose one yourself:
+`PYTHON=/path/to/python3.12 make setup`.
+
 ## Quick start
+
+### First run
 
 ```bash
 make setup          # .env, local venv, PostgreSQL in Docker, reference data loaded
 make generate-data  # mock CSVs into ./data/input
 make ingest         # run the ingestor container against ./data/input
-make psql           # inspect results
-```
-
-### Reset, reload and verify
-
-To clear everything and prove the pipeline end to end:
-
-```bash
-make reset-db       # drop the database volume, re-create the schema, reload reference data
-make generate-data  # optional: new mock files (same seed gives the same files)
-make ingest         # load ./data/input
 make verify         # compare the database with data/input/manifest.json
+make test           # unit + integration tests (optional)
+make psql           # inspect the results (optional)
 ```
 
-`make reset-db` deletes all loaded data, including the per-file status, so every file is
-loaded again on the next `make ingest`. Without a reset, files already marked `done` are
-skipped. `make verify` prints one line per check and exits non-zero on any mismatch:
+### Starting over
+
+Files already marked `done` are skipped, so running `make ingest` again on its own loads
+nothing new. To start over, pick one:
+
+| You want to | Run |
+|---|---|
+| Reload the same files into an empty database | `make reset-db`, then `make ingest` and `make verify` |
+| Start completely from scratch, as on a new machine | `make clean`, then the "First run" steps |
+
+`make reset-db` drops the database volume, re-creates the schema and reloads the reference
+data, so every file is loaded again on the next `make ingest`. The mock files stay; run
+`make generate-data` too if you want them regenerated (the same seed gives the same files).
+
+`make clean` removes the containers, the database volume, the built image, `.venv` and the
+mock data. It keeps `.env`, so local settings survive.
+
+### Checking the result
+
+`make verify` prints one line per check and exits non-zero on any mismatch:
 
 ```
 OK    files done                     database=10  expected=10
@@ -48,6 +69,8 @@ an exact match on both, load with one worker: `WORKERS=1 make ingest`.
 To demonstrate crash recovery, interrupt `make ingest` with Ctrl-C partway, run it again,
 and then run `make verify`. The second run resumes the unfinished files after their last
 committed batch.
+
+### Other ways to run
 
 Run with other settings by overriding the config:
 
