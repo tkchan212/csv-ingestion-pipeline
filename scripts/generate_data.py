@@ -42,7 +42,7 @@ TYPE_PROFILES = {
     "CO2": (400.0, 1500.0, 0, 25.0, (10.0, 80.0)),
     "PWR": (2.0, 120.0, 2, 2.0, (0.5, 8.0)),
 }
-# Not in the registry; the database auto-registers them with empty metadata.
+# Not in the registry, so the known_sensor check quarantines them.
 UNKNOWN_SENSORS = {"HQT-TMP-13-01": "TMP", "RSA-HUM-05-01": "HUM", "DC1-PWR-02-01": "PWR"}
 # Intervals (low, high) outside each type's valid range, for implausible readings.
 IMPLAUSIBLE = {

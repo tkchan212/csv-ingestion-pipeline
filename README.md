@@ -52,7 +52,7 @@ committed batch.
 Run with other settings by overriding the config:
 
 ```bash
-docker compose run --rm ingestor --config /app/config/pipeline.yaml --workers 8
+docker compose run --rm ingestor --workers 8
 ```
 
 Or run it on the host, against the database in Docker:
@@ -196,7 +196,7 @@ would make readings smaller and faster; that is what I would change for producti
   file keeps the rows before the corruption. Rows are independent readings, so that is
   acceptable here.
 
-  Resume assumes the file has not changed since the failed attempt; see "Limitations".
+  Resume assumes the file has not changed since the failed attempt; see "Assumptions".
 - **Duplicates and conflicts are resolved in the database.** The primary key
   `(sensor_name, ts)` enforces one reading per sensor per instant. First row wins: the
   lowest line within a file, the first committed file across files. A losing row with
@@ -305,7 +305,7 @@ it, so its state lives in the database where it can be queried.
   offset (`Z` or `±HH:MM`); date-only, space-separated or naive timestamps are rejected.
   They are stored in UTC, so `10:00Z` and `18:00+08:00` are the same reading.
 - Values must be plain decimal or scientific notation; `NaN`, `Infinity`, `true`, `1_000`
-  and out-of-range numbers are rejected.
+  and numbers too large to store (such as `1e999`) are rejected.
 - Fields are trimmed of surrounding whitespace; an empty sensor name is rejected.
 - Blank lines are skipped. A row with the wrong number of fields is rejected.
 - The header must contain the configured columns (any order, extra columns allowed);
@@ -325,8 +325,9 @@ it, so its state lives in the database where it can be queried.
 - **Replaying quarantined rows** once their cause is fixed (for example a sensor added to the
   registry) is not built.
 - **Scale:** at billions of rows, use an integer `sensor_id` key and partition
-  `sensor_reading` by time (or use TimescaleDB). Bulk backfills would benefit from loading
-  first and building indexes afterwards.
+  `sensor_reading` by time (or use TimescaleDB). The primary key has to stay in place while loading,
+  because `ON CONFLICT` relies on it, so "load first, index afterwards" only applies to
+  secondary indexes.
 - **Operations:** structured (JSON) logs and metrics with alerts on rejection, quarantine
   and conflict rates per file and per sensor; a change history for reference data; a
   migration tool (Flyway, sqitch or Alembic) instead of one init script; archiving
@@ -340,7 +341,7 @@ Readings come from the sensors in `config/reference`, with realistic values for 
 (for example °C 18–30, CO2 400–1500 ppm) that drift gradually per sensor. Small shares of
 rows come from three sensors that are not in the registry, or carry impossible values
 (for example 120 °C), to exercise quarantine. Tune it with
-`python scripts/generate_data.py --help`. On the default data set with 1 worker, the counts in
+`.venv/bin/python scripts/generate_data.py --help`. On the default data set with 1 worker, the counts in
 the database (rows, `rejected_record`, `quarantined_reading` per check, `rows_duplicate`,
 `ingest_conflict`) match the manifest exactly; `make verify` checks this. With several
 workers, see "What parallel runs change" above.
